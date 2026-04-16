@@ -2,31 +2,99 @@ import * as XLSX from 'xlsx';
 import fs from 'fs';
 import path from 'path';
 
-// Parse Excel file and extract contacts
+// Parse Excel / CSV file and extract contacts
 export function parseExcelFile(filePath) {
   try {
-    const workbook = XLSX.readFile(filePath);
+    if (!fs.existsSync(filePath)) {
+      throw new Error('Uploaded file not found');
+    }
+
+    // Read file buffer (more reliable on Render / cloud hosting)
+    const fileBuffer = fs.readFileSync(filePath);
+
+    // Detect extension
+    const ext = path.extname(filePath).toLowerCase();
+
+    let workbook;
+
+    if (ext === '.csv') {
+      workbook = XLSX.read(fileBuffer.toString('utf8'), {
+        type: 'string'
+      });
+    } else {
+      workbook = XLSX.read(fileBuffer, {
+        type: 'buffer'
+      });
+    }
+
+    if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
+      throw new Error('No worksheet found in file');
+    }
+
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
-    
-    // Convert to JSON with headers
-    const jsonData = XLSX.utils.sheet_to_json(worksheet);
-    
-    // Extract name and phone from first two columns
-    const contacts = jsonData.map((row, index) => {
-      const columns = Object.values(row);
-      return {
-        index: index,
-        name: columns[0] ? String(columns[0]).trim() : `Contact ${index + 1}`,
-        phone: String(columns[1]).trim(),
-        originalRow: row
-      };
-    }).filter(contact => contact.phone && contact.phone.length > 0);
+
+    // Read rows as arrays
+    const rows = XLSX.utils.sheet_to_json(worksheet, {
+      header: 1,
+      defval: '',
+      raw: false
+    });
+
+    if (!rows || rows.length < 1) {
+      throw new Error('File is empty');
+    }
+
+    // Remove empty rows
+    const cleanRows = rows.filter(
+      (row) => Array.isArray(row) && row.some((cell) => String(cell).trim() !== '')
+    );
+
+    if (cleanRows.length < 1) {
+      throw new Error('No usable rows found');
+    }
+
+    // Detect if first row is header
+    const firstRow = cleanRows[0].map((cell) =>
+      String(cell).toLowerCase().trim()
+    );
+
+    const hasHeader =
+      firstRow[0]?.includes('name') ||
+      firstRow[1]?.includes('phone') ||
+      firstRow[1]?.includes('mobile') ||
+      firstRow[1]?.includes('number');
+
+    const dataRows = hasHeader ? cleanRows.slice(1) : cleanRows;
+
+    const contacts = dataRows
+      .map((row, index) => {
+        const name =
+          row[0] && String(row[0]).trim() !== ''
+            ? String(row[0]).trim()
+            : `Contact ${index + 1}`;
+
+        const phone = row[1] ? String(row[1]).trim() : '';
+
+        return {
+          index,
+          name,
+          phone,
+          originalRow: row
+        };
+      })
+      .filter((contact) => contact.phone && isValidPhoneNumber(contact.phone));
+
+    if (contacts.length === 0) {
+      throw new Error(
+        'No valid contacts found. Column A = Name, Column B = Phone Number'
+      );
+    }
 
     return {
       contacts,
-      originalData: jsonData,
-      headers: Object.keys(jsonData[0] || {})
+      originalData: dataRows,
+      headers: hasHeader ? cleanRows[0] : ['Name', 'Phone']
     };
   } catch (error) {
     console.error('Error parsing Excel file:', error);
@@ -37,66 +105,64 @@ export function parseExcelFile(filePath) {
 // Generate updated Excel file with responses
 export function generateUpdatedExcel(originalData, responses, outputPath) {
   try {
-    // Create a copy of original data
-    const updatedData = JSON.parse(JSON.stringify(originalData));
+    const updatedData = [];
 
-    // Add response columns if they don't exist
     const responseMap = {};
-    responses.forEach(response => {
-      responseMap[response.phone_number] = response;
+    responses.forEach((response) => {
+      responseMap[String(response.phone_number).trim()] = response;
     });
 
-    // Update rows with responses
-    updatedData.forEach((row, index) => {
-      const columns = Object.values(row);
-      const phoneNumber = String(columns[1]).trim();
-      const response = responseMap[phoneNumber];
+    originalData.forEach((row, index) => {
+      const name =
+        row[0] && String(row[0]).trim() !== ''
+          ? String(row[0]).trim()
+          : `Contact ${index + 1}`;
 
-      if (response) {
-        // Add columns for responses
-        const keys = Object.keys(row);
-        
-        if (keys.length === 2) {
-          // Original file only had Name and Phone
-          row['Mathematics 12th Passed'] = response.math_12th_passed ? 'Yes' : 'No';
-          row['Engineering Interested'] = response.engineering_interested ? 'Interested' : 
-                                          (response.alternative_course ? 'Not Interested' : 'No Response');
-          row['Alternative Course'] = response.alternative_course || '-';
-          row['Call Status'] = response.call_status;
-        } else {
-          // Assume columns are already there
-          const mathColumn = keys[2] || 'Mathematics 12th Passed';
-          const engineeringColumn = keys[3] || 'Engineering Interested';
-          const altCourseColumn = keys[4] || 'Alternative Course';
-          
-          row[mathColumn] = response.math_12th_passed ? 'Yes' : 'No';
-          row[engineeringColumn] = response.engineering_interested ? 'Interested' : 
-                                   (response.alternative_course ? 'Not Interested' : 'No Response');
-          row[altCourseColumn] = response.alternative_course || '-';
-        }
-      }
+      const phone = row[1] ? String(row[1]).trim() : '';
+
+      const response = responseMap[phone];
+
+      updatedData.push({
+        Name: name,
+        Phone: phone,
+        'Mathematics 12th Passed': response
+          ? response.math_12th_passed
+            ? 'Yes'
+            : 'No'
+          : 'No Response',
+
+        'Engineering Interested': response
+          ? response.engineering_interested
+            ? 'Yes'
+            : 'No'
+          : 'No Response',
+
+        'Alternative Course': response
+          ? response.alternative_course || '-'
+          : '-',
+
+        'Call Status': response
+          ? response.call_status || 'Completed'
+          : 'Pending'
+      });
     });
 
-    // Create workbook and add data
     const workbook = XLSX.utils.book_new();
     const worksheet = XLSX.utils.json_to_sheet(updatedData);
-    
-    // Set column widths for better readability
-    const columnWidths = [
-      { wch: 20 }, // Name
-      { wch: 15 }, // Phone
-      { wch: 20 }, // Mathematics 12th Passed
-      { wch: 25 }, // Engineering Interested
-      { wch: 30 }, // Alternative Course
-      { wch: 15 }  // Call Status
+
+    worksheet['!cols'] = [
+      { wch: 25 },
+      { wch: 18 },
+      { wch: 25 },
+      { wch: 25 },
+      { wch: 25 },
+      { wch: 18 }
     ];
-    worksheet['!cols'] = columnWidths;
 
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Survey Results');
-    
-    // Write file
+
     XLSX.writeFile(workbook, outputPath);
-    
+
     return outputPath;
   } catch (error) {
     console.error('Error generating Excel file:', error);
@@ -106,19 +172,18 @@ export function generateUpdatedExcel(originalData, responses, outputPath) {
 
 // Format phone number for Twilio
 export function formatPhoneNumber(phone) {
-  // Remove all non-digit characters
-  let cleaned = phone.replace(/\D/g, '');
-  
-  // Add country code if not present (assuming US)
+  let cleaned = String(phone).replace(/\D/g, '');
+
+  // India default
   if (cleaned.length === 10) {
-    cleaned = '1' + cleaned;
+    cleaned = '91' + cleaned;
   }
-  
+
   return '+' + cleaned;
 }
 
-// Validate phone number format
+// Validate phone number
 export function isValidPhoneNumber(phone) {
-  const digits = phone.replace(/\D/g, '');
-  return digits.length >= 10;
+  const digits = String(phone).replace(/\D/g, '');
+  return digits.length >= 10 && digits.length <= 15;
 }
