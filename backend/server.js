@@ -56,10 +56,22 @@ if (!fs.existsSync(resultsDir)) fs.mkdirSync(resultsDir, { recursive: true });
 
 // FIXED CORS
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'https://call-agent-nu.vercel.app',
-    'http://localhost:3000'
-  ],
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+
+    const allowed = [
+      'http://localhost:3000',
+      'https://call-agent-nu.vercel.app'
+    ];
+
+    const isVercelPreview = origin.endsWith('.vercel.app');
+
+    if (allowed.includes(origin) || isVercelPreview) {
+      return callback(null, true);
+    }
+
+    return callback(new Error('CORS not allowed'));
+  },
   credentials: true
 }));
 
