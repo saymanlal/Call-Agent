@@ -61,7 +61,7 @@ export function SurveyProgress({
 }: Props) {
   const API =
     process.env.NEXT_PUBLIC_BACKEND_URL ||
-    'https://call-agent-envo.onrender.com';
+    'https://call-agent-ls45.onrender.com';
 
   const [data, setData] =
     useState<ProgressData | null>(null);
