@@ -1,5 +1,5 @@
 import twilio from 'twilio';
-import { updateResponse } from './supabaseClient'; // Make sure this import is correct
+import { updateResponse } from './supabaseClient,js'; // Make sure this import is correct
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
