@@ -2,17 +2,16 @@ import * as XLSX from 'xlsx';
 import fs from 'fs';
 import path from 'path';
 
-// Parse Excel / CSV file and extract contacts
+// ===============================
+// PARSE EXCEL / CSV
+// ===============================
 export function parseExcelFile(filePath) {
   try {
     if (!fs.existsSync(filePath)) {
       throw new Error('Uploaded file not found');
     }
 
-    // Read file buffer (more reliable on Render / cloud hosting)
     const fileBuffer = fs.readFileSync(filePath);
-
-    // Detect extension
     const ext = path.extname(filePath).toLowerCase();
 
     let workbook;
@@ -27,154 +26,303 @@ export function parseExcelFile(filePath) {
       });
     }
 
-    if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
-      throw new Error('No worksheet found in file');
-    }
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
 
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-
-    // Read rows as arrays
-    const rows = XLSX.utils.sheet_to_json(worksheet, {
+    const rows = XLSX.utils.sheet_to_json(sheet, {
       header: 1,
       defval: '',
       raw: false
     });
 
-    if (!rows || rows.length < 1) {
-      throw new Error('File is empty');
-    }
-
-    // Remove empty rows
     const cleanRows = rows.filter(
-      (row) => Array.isArray(row) && row.some((cell) => String(cell).trim() !== '')
+      (row) =>
+        Array.isArray(row) &&
+        row.some((cell) => String(cell).trim() !== '')
     );
 
-    if (cleanRows.length < 1) {
-      throw new Error('No usable rows found');
-    }
-
-    // Detect if first row is header
-    const firstRow = cleanRows[0].map((cell) =>
-      String(cell).toLowerCase().trim()
+    const firstRow = cleanRows[0].map((x) =>
+      String(x).toLowerCase().trim()
     );
 
     const hasHeader =
       firstRow[0]?.includes('name') ||
-      firstRow[1]?.includes('phone') ||
-      firstRow[1]?.includes('mobile') ||
-      firstRow[1]?.includes('number');
+      firstRow[1]?.includes('phone');
 
-    const dataRows = hasHeader ? cleanRows.slice(1) : cleanRows;
+    const dataRows = hasHeader
+      ? cleanRows.slice(1)
+      : cleanRows;
 
     const contacts = dataRows
-      .map((row, index) => {
-        const name =
-          row[0] && String(row[0]).trim() !== ''
+      .map((row, index) => ({
+        index,
+        name:
+          row[0] && String(row[0]).trim()
             ? String(row[0]).trim()
-            : `Contact ${index + 1}`;
-
-        const phone = row[1] ? String(row[1]).trim() : '';
-
-        return {
-          index,
-          name,
-          phone,
-          originalRow: row
-        };
-      })
-      .filter((contact) => contact.phone && isValidPhoneNumber(contact.phone));
-
-    if (contacts.length === 0) {
-      throw new Error(
-        'No valid contacts found. Column A = Name, Column B = Phone Number'
-      );
-    }
+            : `Contact ${index + 1}`,
+        phone: row[1] ? String(row[1]).trim() : '',
+        originalRow: row
+      }))
+      .filter((x) => x.phone && isValidPhoneNumber(x.phone));
 
     return {
       contacts,
       originalData: dataRows,
-      headers: hasHeader ? cleanRows[0] : ['Name', 'Phone']
+      headers: hasHeader
+        ? cleanRows[0]
+        : ['NAME', 'PHONE']
     };
   } catch (error) {
-    console.error('Error parsing Excel file:', error);
-    throw new Error(`Failed to parse Excel file: ${error.message}`);
+    throw new Error(error.message);
   }
 }
 
-// Generate updated Excel file with responses
-export function generateUpdatedExcel(originalData, responses, outputPath) {
+// ===============================
+// EXCEL GENERATOR
+// ===============================
+export function generateUpdatedExcel(
+  originalData,
+  responses,
+  outputPath
+) {
   try {
-    const updatedData = [];
+    const map = {};
 
-    const responseMap = {};
-    responses.forEach((response) => {
-      responseMap[String(response.phone_number).trim()] = response;
+    responses.forEach((r) => {
+      map[String(r.phone_number).trim()] = r;
     });
+
+    const rows = [];
 
     originalData.forEach((row, index) => {
       const name =
-        row[0] && String(row[0]).trim() !== ''
+        row[0] && String(row[0]).trim()
           ? String(row[0]).trim()
           : `Contact ${index + 1}`;
 
-      const phone = row[1] ? String(row[1]).trim() : '';
+      const phone = row[1]
+        ? String(row[1]).trim()
+        : '';
 
-      const response = responseMap[phone];
+      const r = map[phone];
 
-      updatedData.push({
-        Name: name,
-        Phone: phone,
-        'Mathematics 12th Passed': response
-          ? response.math_12th_passed
-            ? 'Yes'
-            : 'No'
-          : 'No Response',
+      // Q1
+      const q1 =
+        r?.math_12th_passed === true
+          ? 'YES'
+          : r?.math_12th_passed === false
+          ? 'NO'
+          : '-';
 
-        'Engineering Interested': response
-          ? response.engineering_interested
-            ? 'Yes'
-            : 'No'
-          : 'No Response',
+      // Q2 NEW FORMAT
+      let q2 = '-';
 
-        'Alternative Course': response
-          ? response.alternative_course || '-'
-          : '-',
+      if (r?.engineering_interested === true) {
+        q2 = 'INTERESTED';
+      } else if (
+        r?.engineering_interested === false
+      ) {
+        q2 =
+          (
+            r?.alternative_course || 'NOT INTERESTED'
+          ).toUpperCase();
+      }
 
-        'Call Status': response
-          ? response.call_status || 'Completed'
-          : 'Pending'
+      rows.push({
+        NAME: name,
+        PHONE: phone,
+        'MATH 12TH PASSED': q1,
+        'ENGINEERING DECISION': q2,
+        'CALL STATUS':
+          (
+            r?.call_status || 'PENDING'
+          ).toUpperCase()
       });
     });
 
-    const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.json_to_sheet(updatedData);
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
 
-    worksheet['!cols'] = [
-      { wch: 25 },
+    ws['!cols'] = [
+      { wch: 28 },
       { wch: 18 },
-      { wch: 25 },
-      { wch: 25 },
-      { wch: 25 },
+      { wch: 22 },
+      { wch: 28 },
       { wch: 18 }
     ];
 
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Survey Results');
+    const range = XLSX.utils.decode_range(
+      ws['!ref']
+    );
 
-    XLSX.writeFile(workbook, outputPath);
+    // HEADER
+    for (let C = range.s.c; C <= range.e.c; ++C) {
+      const cell = XLSX.utils.encode_cell({
+        r: 0,
+        c: C
+      });
+
+      if (!ws[cell]) continue;
+
+      ws[cell].s = {
+        font: {
+          bold: true,
+          color: { rgb: 'FFFFFF' },
+          sz: 12
+        },
+        fill: {
+          fgColor: { rgb: '1F4E78' }
+        },
+        alignment: {
+          horizontal: 'center',
+          vertical: 'center'
+        }
+      };
+    }
+
+    // BODY
+    for (let R = 1; R <= range.e.r; ++R) {
+      for (
+        let C = range.s.c;
+        C <= range.e.c;
+        ++C
+      ) {
+        const cell =
+          XLSX.utils.encode_cell({
+            r: R,
+            c: C
+          });
+
+        if (!ws[cell]) continue;
+
+        ws[cell].s = {
+          alignment: {
+            horizontal: 'center',
+            vertical: 'center'
+          }
+        };
+      }
+
+      // Q1 column C
+      const c1 = `C${R + 1}`;
+
+      if (ws[c1]?.v === 'YES') {
+        ws[c1].s.fill = {
+          fgColor: { rgb: 'C6EFCE' }
+        };
+        ws[c1].s.font = {
+          bold: true,
+          color: { rgb: '006100' }
+        };
+      }
+
+      if (ws[c1]?.v === 'NO') {
+        ws[c1].s.fill = {
+          fgColor: { rgb: 'FFC7CE' }
+        };
+        ws[c1].s.font = {
+          bold: true,
+          color: { rgb: '9C0006' }
+        };
+      }
+
+      // Q2 column D
+      const c2 = `D${R + 1}`;
+
+      if (
+        ws[c2]?.v === 'INTERESTED'
+      ) {
+        ws[c2].s.fill = {
+          fgColor: { rgb: 'C6EFCE' }
+        };
+        ws[c2].s.font = {
+          bold: true,
+          color: { rgb: '006100' }
+        };
+      }
+
+      if (
+        ws[c2]?.v !== 'INTERESTED' &&
+        ws[c2]?.v !== '-'
+      ) {
+        ws[c2].s.fill = {
+          fgColor: { rgb: 'FFC7CE' }
+        };
+        ws[c2].s.font = {
+          bold: true,
+          color: { rgb: '9C0006' }
+        };
+      }
+
+      // STATUS column E
+      const st = `E${R + 1}`;
+
+      if (ws[st]?.v === 'COMPLETED') {
+        ws[st].s.fill = {
+          fgColor: { rgb: 'C6EFCE' }
+        };
+        ws[st].s.font = {
+          bold: true,
+          color: { rgb: '006100' }
+        };
+      }
+
+      if (ws[st]?.v === 'CANCELED') {
+        ws[st].s.fill = {
+          fgColor: { rgb: 'FFC7CE' }
+        };
+        ws[st].s.font = {
+          bold: true,
+          color: { rgb: '9C0006' }
+        };
+      }
+
+      if (
+        ws[st]?.v === 'FAILED' ||
+        ws[st]?.v === 'BUSY' ||
+        ws[st]?.v === 'NO-ANSWER'
+      ) {
+        ws[st].s.fill = {
+          fgColor: { rgb: 'BDD7EE' }
+        };
+        ws[st].s.font = {
+          bold: true,
+          color: { rgb: '1F4E78' }
+        };
+      }
+
+      if (ws[st]?.v === 'PENDING') {
+        ws[st].s.fill = {
+          fgColor: { rgb: 'FFF2CC' }
+        };
+        ws[st].s.font = {
+          bold: true,
+          color: { rgb: '7F6000' }
+        };
+      }
+    }
+
+    XLSX.utils.book_append_sheet(
+      wb,
+      ws,
+      'SURVEY RESULTS'
+    );
+
+    XLSX.writeFile(wb, outputPath, {
+      cellStyles: true
+    });
 
     return outputPath;
   } catch (error) {
-    console.error('Error generating Excel file:', error);
-    throw new Error(`Failed to generate Excel file: ${error.message}`);
+    throw new Error(error.message);
   }
 }
 
-// Format phone number for Twilio
+// ===============================
+// PHONE FORMAT
+// ===============================
 export function formatPhoneNumber(phone) {
   let cleaned = String(phone).replace(/\D/g, '');
 
-  // India default
   if (cleaned.length === 10) {
     cleaned = '91' + cleaned;
   }
@@ -182,8 +330,13 @@ export function formatPhoneNumber(phone) {
   return '+' + cleaned;
 }
 
-// Validate phone number
+// ===============================
+// VALIDATE PHONE
+// ===============================
 export function isValidPhoneNumber(phone) {
   const digits = String(phone).replace(/\D/g, '');
-  return digits.length >= 10 && digits.length <= 15;
+  return (
+    digits.length >= 10 &&
+    digits.length <= 15
+  );
 }

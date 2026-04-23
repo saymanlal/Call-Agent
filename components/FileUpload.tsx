@@ -1,191 +1,289 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Upload, CheckCircle, AlertCircle } from 'lucide-react';
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription
+} from '@/components/ui/card';
+import {
+  Alert,
+  AlertDescription
+} from '@/components/ui/alert';
+import {
+  UploadCloud,
+  Loader2,
+  Check,
+  AlertTriangle,
+  FileSpreadsheet
+} from 'lucide-react';
 
 interface FileUploadProps {
-  onUploadSuccess: (surveyId: string, fileName: string, totalContacts: number) => void;
+  onUploadSuccess: (
+    surveyId: string,
+    fileName: string,
+    totalContacts: number
+  ) => void;
   isLoading?: boolean;
 }
 
-export function FileUpload({ onUploadSuccess, isLoading = false }: FileUploadProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadSuccess, setUploadSuccess] = useState(false);
-  const [selectedFileName, setSelectedFileName] = useState<string>('');
-  const [isUploading, setIsUploading] = useState(false);
+export function FileUpload({
+  onUploadSuccess,
+  isLoading = false
+}: FileUploadProps) {
+  const fileInputRef =
+    useRef<HTMLInputElement>(null);
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
+  const [dragging, setDragging] =
+    useState(false);
 
-  const handleDragLeave = () => {
-    setIsDragging(false);
-  };
+  const [uploading, setUploading] =
+    useState(false);
 
-  const handleFileSelect = async (file: File) => {
-    // Validate file type
-    const validTypes = [
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/vnd.ms-excel',
-      'text/csv'
-    ];
+  const [progress, setProgress] =
+    useState(0);
 
-    if (!validTypes.includes(file.type) && !file.name.match(/\.(xlsx?|csv)$/i)) {
-      setUploadError('Please upload a valid Excel or CSV file (.xlsx, .xls, or .csv)');
-      return;
+  const [fileName, setFileName] =
+    useState('');
+
+  const [error, setError] =
+    useState('');
+
+  const [success, setSuccess] =
+    useState(false);
+
+  const API =
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    'https://call-agent-envo.onrender.com';
+
+  const validateFile = (file: File) => {
+    const ok =
+      file.name.match(/\.(xlsx?|csv|json)$/i);
+
+    if (!ok) {
+      setError(
+        'Allowed formats: XLSX, XLS, CSV, JSON'
+      );
+      return false;
     }
 
-    setSelectedFileName(file.name);
-    setUploadError(null);
-    setUploadSuccess(false);
-
-    // Upload file
-    await uploadFile(file);
+    return true;
   };
 
-  const uploadFile = async (file: File) => {
-    setIsUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
+  const uploadFile = async (
+    file: File
+  ) => {
+    setUploading(true);
+    setProgress(0);
+    setError('');
+    setSuccess(false);
 
-      const backendUrl = 
-      process.env.NEXT_PUBLIC_BACKEND_URL ||
-      'https://call-agent-envo.onrender.com';
-      const response = await fetch(`${backendUrl}/api/surveys/upload`, {
-        method: 'POST',
-        body: formData
-      });
+    const formData = new FormData();
+    formData.append('file', file);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Upload failed');
+    const xhr = new XMLHttpRequest();
+
+    xhr.open(
+      'POST',
+      `${API}/api/surveys/upload`
+    );
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) {
+        const percent = Math.round(
+          (e.loaded / e.total) * 100
+        );
+
+        setProgress(percent);
       }
+    };
 
-      const data = await response.json();
-      
-      if (data.success) {
-        setUploadSuccess(true);
-        setUploadError(null);
-        onUploadSuccess(data.survey.id, data.survey.fileName, data.survey.totalContacts);
+    xhr.onload = () => {
+      setUploading(false);
+
+      if (
+        xhr.status >= 200 &&
+        xhr.status < 300
+      ) {
+        const data = JSON.parse(
+          xhr.responseText
+        );
+
+        setSuccess(true);
+
+        onUploadSuccess(
+          data.survey.id,
+          data.survey.fileName,
+          data.survey.totalContacts
+        );
+      } else {
+        const err = JSON.parse(
+          xhr.responseText
+        );
+
+        setError(
+          err.error || 'Upload failed'
+        );
       }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Upload failed. Please try again.';
-      setUploadError(errorMessage);
-      setUploadSuccess(false);
-    } finally {
-      setIsUploading(false);
-    }
+    };
+
+    xhr.onerror = () => {
+      setUploading(false);
+      setError('Network error');
+    };
+
+    xhr.send(formData);
   };
 
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
+  const onSelect = async (
+    file: File
+  ) => {
+    if (!validateFile(file)) return;
 
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      handleFileSelect(files[0]);
-    }
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      handleFileSelect(e.target.files[0]);
-    }
+    setFileName(file.name);
+    uploadFile(file);
   };
 
   return (
-    <Card className="w-full">
+    <Card className="border-white/10 bg-[#0f1117] text-white shadow-2xl rounded-2xl overflow-hidden">
+      <div className="h-1 bg-gradient-to-r from-slate-600 via-zinc-300 to-slate-600" />
+
       <CardHeader>
-        <CardTitle>Upload Survey File</CardTitle>
-        <CardDescription>
-          Upload an Excel or CSV file with contact information (Name in first column, Phone in second column)
+        <CardTitle className="text-2xl tracking-tight">
+          Survey Agent 101
+        </CardTitle>
+
+        <CardDescription className="text-zinc-400">
+          Upload source sheet to begin
+          automated survey campaign
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
-          {/* Drag and Drop Area */}
-          <div
-            className={`relative border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-              isDragging
-                ? 'border-blue-500 bg-blue-50'
-                : 'border-gray-300 hover:border-gray-400'
-            }`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              onChange={handleInputChange}
-              className="hidden"
-              disabled={isUploading || isLoading}
-            />
-            
-            <div className="flex flex-col items-center gap-2">
-              <Upload className="w-8 h-8 text-gray-400" />
-              <p className="text-sm font-medium">
-                {isUploading ? 'Uploading...' : 'Drag and drop your file here'}
+
+      <CardContent className="space-y-5">
+
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() =>
+            setDragging(false)
+          }
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragging(false);
+
+            if (
+              e.dataTransfer.files[0]
+            ) {
+              onSelect(
+                e.dataTransfer.files[0]
+              );
+            }
+          }}
+          className={`rounded-2xl border-2 border-dashed p-10 text-center transition ${
+            dragging
+              ? 'border-white bg-white/5'
+              : 'border-white/10'
+          }`}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept=".xlsx,.xls,.csv,.json"
+            onChange={(e) => {
+              if (
+                e.target.files?.[0]
+              ) {
+                onSelect(
+                  e.target.files[0]
+                );
+              }
+            }}
+          />
+
+          <div className="space-y-4 flex flex-col items-center">
+            {uploading ? (
+              <Loader2 className="w-10 h-10 animate-spin text-white" />
+            ) : (
+              <UploadCloud className="w-10 h-10 text-zinc-400" />
+            )}
+
+            <div className="space-y-1">
+              <p className="font-medium">
+                {uploading
+                  ? `Uploading ${progress}%`
+                  : 'Drop file here'}
               </p>
-              <p className="text-xs text-gray-500">
-                or
+
+              <p className="text-sm text-zinc-500">
+                or choose file manually
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading || isLoading}
-              >
-                Browse Files
-              </Button>
             </div>
-          </div>
 
-          {/* Selected File Display */}
-          {selectedFileName && (
-            <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
-              <CheckCircle className="w-4 h-4 text-green-500" />
-              <span className="text-sm text-gray-700">{selectedFileName}</span>
-            </div>
-          )}
-
-          {/* Error Message */}
-          {uploadError && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>{uploadError}</AlertDescription>
-            </Alert>
-          )}
-
-          {/* Success Message */}
-          {uploadSuccess && (
-            <Alert className="border-green-200 bg-green-50">
-              <CheckCircle className="h-4 w-4 text-green-600" />
-              <AlertDescription className="text-green-800">
-                File uploaded successfully! Your survey is ready to begin calling.
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {/* Format Instructions */}
-          <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-            <p className="text-xs font-semibold text-blue-900 mb-2">File Format Requirements:</p>
-            <ul className="text-xs text-blue-800 space-y-1">
-              <li>• Column A: Contact Name</li>
-              <li>• Column B: Phone Number (10-15 digits)</li>
-              <li>• Supported formats: .xlsx, .xls, .csv</li>
-              <li>• Minimum 1 contact required</li>
-            </ul>
+            <Button
+              onClick={() =>
+                fileInputRef.current?.click()
+              }
+              disabled={
+                uploading ||
+                isLoading
+              }
+              className="bg-white text-black hover:bg-zinc-200"
+            >
+              Browse Files
+            </Button>
           </div>
         </div>
+
+        {uploading && (
+          <div className="space-y-2">
+            <div className="text-sm text-zinc-400 flex justify-between">
+              <span>Transfer</span>
+              <span>{progress}%</span>
+            </div>
+
+            <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+              <div
+                className="h-full bg-white transition-all"
+                style={{
+                  width: `${progress}%`
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {fileName && (
+          <div className="rounded-xl border border-white/10 bg-white/5 px-4 py-3 flex items-center gap-3">
+            <FileSpreadsheet className="w-4 h-4 text-zinc-300" />
+            <span className="text-sm truncate">
+              {fileName}
+            </span>
+          </div>
+        )}
+
+        {error && (
+          <Alert className="border-red-500/30 bg-red-500/10 text-red-200">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              {error}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {success && (
+          <Alert className="border-green-500/30 bg-green-500/10 text-green-200">
+            <Check className="h-4 w-4" />
+            <AlertDescription>
+              File uploaded successfully
+            </AlertDescription>
+          </Alert>
+        )}
       </CardContent>
     </Card>
   );
