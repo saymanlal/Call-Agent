@@ -11,7 +11,7 @@ if (!accountSid || !authToken || !fromNumber) {
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ||
-  'https://call-agent-envo.onrender.com';
+  'https://call-agent-ls45.onrender.com';
 
 const client = twilio(accountSid, authToken);
 
