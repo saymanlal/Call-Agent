@@ -81,26 +81,52 @@ export function SurveyProgress({
   const timer =
     useRef<NodeJS.Timeout | null>(null);
 
-  // ===============================
-  // FETCH PROGRESS
-  // ===============================
+  // ===================================
+  // FETCH LIVE PROGRESS
+  // ===================================
   const fetchProgress = async (
     manual = false
   ) => {
     try {
-      if (manual) setRefreshing(true);
+      if (manual)
+        setRefreshing(true);
 
       const res = await fetch(
-        `${API}/api/surveys/${surveyId}/progress?t=${Date.now()}`,
+        `${API}/api/surveys/${surveyId}/progress?ts=${Date.now()}`,
         {
-          cache: 'no-store'
+          method: 'GET',
+          cache: 'no-store',
+          headers: {
+            'Cache-Control':
+              'no-cache',
+            Pragma:
+              'no-cache'
+          }
         }
       );
+
+      if (!res.ok)
+        throw new Error(
+          'Failed'
+        );
 
       const json =
         await res.json();
 
-      setData(json);
+      setData({
+        ...json
+      });
+
+      if (
+        json.status ===
+          'completed' ||
+        json.pending === 0
+      ) {
+        if (timer.current)
+          clearInterval(
+            timer.current
+          );
+      }
     } catch (error) {
       console.log(error);
     } finally {
@@ -109,101 +135,139 @@ export function SurveyProgress({
     }
   };
 
-  // ===============================
+  // ===================================
   // AUTO REFRESH
-  // ===============================
+  // ===================================
   useEffect(() => {
     fetchProgress(true);
 
-    timer.current = setInterval(
-      () => {
+    timer.current =
+      setInterval(() => {
         fetchProgress();
-      },
-      3000
-    );
+      }, 2000);
 
     return () => {
       if (timer.current)
-        clearInterval(timer.current);
+        clearInterval(
+          timer.current
+        );
     };
   }, [surveyId]);
 
-  // ===============================
-  // START CALLS
-  // ===============================
-  const startCalls = async () => {
-    setStarting(true);
+  // ===================================
+  // START CALLING
+  // ===================================
+  const startCalls =
+    async () => {
+      try {
+        setStarting(true);
 
-    await fetch(
-      `${API}/api/surveys/${surveyId}/start-calls`,
-      {
-        method: 'POST'
-      }
-    );
-
-    await fetchProgress(true);
-
-    setStarting(false);
-  };
-
-  // ===============================
-  // DOWNLOAD REPORT
-  // ===============================
-  const downloadSheet = () => {
-    window.open(
-      `${API}/api/surveys/${surveyId}/download?t=${Date.now()}`,
-      '_blank'
-    );
-  };
-
-  // ===============================
-  // VIEW SHEET
-  // ===============================
-  const openViewer = async () => {
-    try {
-      setViewerOpen(true);
-      setSheetLoading(true);
-
-      const res = await fetch(
-        `${API}/api/surveys/${surveyId}/download?t=${Date.now()}`
-      );
-
-      const blob =
-        await res.blob();
-
-      const buffer =
-        await blob.arrayBuffer();
-
-      const workbook =
-        XLSX.read(buffer, {
-          type: 'array'
-        });
-
-      const firstSheet =
-        workbook.Sheets[
-          workbook.SheetNames[0]
-        ];
-
-      const rows =
-        XLSX.utils.sheet_to_json(
-          firstSheet,
+        await fetch(
+          `${API}/api/surveys/${surveyId}/start-calls`,
           {
-            header: 1
+            method:
+              'POST'
           }
         );
 
-      setSheetRows(rows as any[][]);
-    } catch (error) {
-      console.log(error);
-    } finally {
-      setSheetLoading(false);
-    }
-  };
+        await fetchProgress(
+          true
+        );
 
+        timer.current =
+          setInterval(
+            () =>
+              fetchProgress(),
+            2000
+          );
+      } catch (error) {
+        console.log(error);
+      } finally {
+        setStarting(false);
+      }
+    };
+
+  // ===================================
+  // DOWNLOAD
+  // ===================================
+  const downloadSheet =
+    () => {
+      window.open(
+        `${API}/api/surveys/${surveyId}/download?ts=${Date.now()}`,
+        '_blank'
+      );
+    };
+
+  // ===================================
+  // SHEET VIEWER
+  // ===================================
+  const openViewer =
+    async () => {
+      try {
+        setViewerOpen(
+          true
+        );
+        setSheetLoading(
+          true
+        );
+
+        const res =
+          await fetch(
+            `${API}/api/surveys/${surveyId}/download?ts=${Date.now()}`,
+            {
+              cache:
+                'no-store'
+            }
+          );
+
+        const blob =
+          await res.blob();
+
+        const buffer =
+          await blob.arrayBuffer();
+
+        const workbook =
+          XLSX.read(
+            buffer,
+            {
+              type:
+                'array'
+            }
+          );
+
+        const sheet =
+          workbook.Sheets[
+            workbook
+              .SheetNames[0]
+          ];
+
+        const rows =
+          XLSX.utils.sheet_to_json(
+            sheet,
+            {
+              header: 1
+            }
+          );
+
+        setSheetRows(
+          rows as any[][]
+        );
+      } catch (error) {
+        console.log(error);
+      } finally {
+        setSheetLoading(
+          false
+        );
+      }
+    };
+
+  // ===================================
+  // LOADING
+  // ===================================
   if (loading) {
     return (
       <Card className="bg-[#0f1117] border-white/10 text-white rounded-2xl">
-        <CardContent className="py-10 flex justify-center gap-3">
+        <CardContent className="py-10 flex items-center justify-center gap-3">
           <Loader2 className="animate-spin w-5 h-5" />
           Loading Dashboard...
         </CardContent>
@@ -234,7 +298,10 @@ export function SurveyProgress({
 
   const stats = [
     ['Total', total],
-    ['Completed', completed],
+    [
+      'Completed',
+      completed
+    ],
     ['Failed', failed],
     ['Pending', pending]
   ];
@@ -259,31 +326,50 @@ export function SurveyProgress({
 
           {/* STATS */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {stats.map((s) => (
-              <div
-                key={s[0]}
-                className="rounded-xl border border-white/10 bg-white/5 p-4 text-center"
-              >
-                <p className="text-xs text-zinc-400">
-                  {s[0]}
-                </p>
+            {stats.map(
+              (
+                item
+              ) => (
+                <div
+                  key={
+                    item[0]
+                  }
+                  className="rounded-xl border border-white/10 bg-white/5 p-4 text-center"
+                >
+                  <p className="text-xs text-zinc-400">
+                    {
+                      item[0]
+                    }
+                  </p>
 
-                <p className="text-2xl font-semibold mt-1">
-                  {s[1]}
-                </p>
-              </div>
-            ))}
+                  <p className="text-2xl font-semibold mt-1">
+                    {
+                      item[1]
+                    }
+                  </p>
+                </div>
+              )
+            )}
           </div>
 
           {/* PROGRESS */}
           <div className="space-y-2">
             <div className="flex justify-between text-sm text-zinc-400">
-              <span>Progress</span>
-              <span>{percent}%</span>
+              <span>
+                Progress
+              </span>
+              <span>
+                {
+                  percent
+                }
+                %
+              </span>
             </div>
 
             <Progress
-              value={percent}
+              value={
+                percent
+              }
               className="h-2 bg-white/10"
             />
           </div>
@@ -293,7 +379,8 @@ export function SurveyProgress({
             'in_progress' && (
             <Alert className="border-white/10 bg-white/5 text-zinc-300">
               <AlertDescription>
-                Live campaign running...
+                Live campaign
+                running...
               </AlertDescription>
             </Alert>
           )}
@@ -302,7 +389,8 @@ export function SurveyProgress({
             'completed' && (
             <Alert className="border-green-500/20 bg-green-500/10 text-green-300">
               <AlertDescription>
-                Campaign completed.
+                Campaign
+                completed.
               </AlertDescription>
             </Alert>
           )}
@@ -330,11 +418,19 @@ export function SurveyProgress({
 
             <Button
               onClick={() =>
-                fetchProgress(true)
+                fetchProgress(
+                  true
+                )
               }
               className="border-white/10 bg-white/5 text-white hover:bg-white/10"
             >
-              <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+              <RefreshCw
+                className={`w-4 h-4 mr-2 ${
+                  refreshing
+                    ? 'animate-spin'
+                    : ''
+                }`}
+              />
               Refresh
             </Button>
 
@@ -342,7 +438,7 @@ export function SurveyProgress({
               onClick={
                 openViewer
               }
-              className="bg-white/10 hover:bg-white/15 border border-white/10"
+              className="bg-white/10 border border-white/10 hover:bg-white/15"
             >
               <Eye className="w-4 h-4 mr-2" />
               Sheet Viewer
@@ -362,13 +458,15 @@ export function SurveyProgress({
         </CardContent>
       </Card>
 
-      {/* SHEET VIEWER MODAL */}
+      {/* VIEWER */}
       {viewerOpen && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-5">
+
           <div className="w-full max-w-7xl h-[85vh] bg-[#0f1117] border border-white/10 rounded-2xl overflow-hidden flex flex-col">
 
-            <div className="p-4 border-b border-white/10 flex justify-between items-center text-white">
-              <h2 className="font-semibold text-lg">
+            <div className="p-4 border-b border-white/10 flex justify-between items-center">
+
+              <h2 className="text-white font-semibold text-lg">
                 Sheet Viewer
               </h2>
 
@@ -381,8 +479,9 @@ export function SurveyProgress({
                   )
                 }
               >
-                <X className="w-4 h-4" />
+                <X className="w-4 h-4 text-white" />
               </Button>
+
             </div>
 
             <div className="flex-1 overflow-auto p-4">
@@ -401,7 +500,9 @@ export function SurveyProgress({
                         i
                       ) => (
                         <tr
-                          key={i}
+                          key={
+                            i
+                          }
                           className="border-b border-white/10"
                         >
                           {row.map(
@@ -410,14 +511,18 @@ export function SurveyProgress({
                               j
                             ) => (
                               <td
-                                key={j}
+                                key={
+                                  j
+                                }
                                 className={`px-3 py-2 whitespace-nowrap ${
                                   i === 0
                                     ? 'font-semibold bg-white/10'
                                     : ''
                                 }`}
                               >
-                                {cell}
+                                {
+                                  cell
+                                }
                               </td>
                             )
                           )}
