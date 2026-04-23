@@ -53,15 +53,22 @@ app.use(express.urlencoded({ extended: true }));
 
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, uploadsDir),
-  filename: (_, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
+  filename: (_, file, cb) =>
+    cb(null, `${Date.now()}-${file.originalname}`)
 });
 
 const upload = multer({ storage });
 
+// ===============================
+// ROOT
+// ===============================
 app.get('/', (_, res) => {
   res.json({ success: true, message: 'Backend Running' });
 });
 
+// ===============================
+// UPLOAD
+// ===============================
 app.post('/api/surveys/upload', upload.single('file'), async (req, res) => {
   try {
     const parsed = parseExcelFile(req.file.path);
@@ -70,10 +77,13 @@ app.post('/api/surveys/upload', upload.single('file'), async (req, res) => {
       isValidPhoneNumber(c.phone)
     );
 
-    const survey = await createSurvey(req.file.originalname, parsed);
+    const survey = await createSurvey(
+      req.file.originalname,
+      parsed
+    );
 
-    for (const contact of contacts) {
-      await createResponse(survey.id, contact);
+    for (const row of contacts) {
+      await createResponse(survey.id, row);
     }
 
     res.json({
@@ -86,18 +96,27 @@ app.post('/api/surveys/upload', upload.single('file'), async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
+// ===============================
+// START CALLS
+// ===============================
 app.post('/api/surveys/:surveyId/start-calls', async (req, res) => {
   try {
     const surveyId = req.params.surveyId;
-    const responses = await getSurveyResponses(surveyId);
 
-    await updateSurveyStatus(surveyId, { status: 'in_progress' });
+    const rows = await getSurveyResponses(surveyId);
 
-    for (const row of responses) {
+    await updateSurveyStatus(surveyId, {
+      status: 'in_progress'
+    });
+
+    for (const row of rows) {
       try {
         await initiateCall(
           surveyId,
@@ -106,30 +125,38 @@ app.post('/api/surveys/:surveyId/start-calls', async (req, res) => {
           formatPhoneNumber(row.phone_number)
         );
       } catch {
-        await updateResponse(row.id, { status: 'failed' });
+        await updateResponse(row.id, {
+          status: 'failed'
+        });
       }
     }
 
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
+// ===============================
+// PROGRESS
+// ===============================
 app.get('/api/surveys/:surveyId/progress', async (req, res) => {
   try {
     const surveyId = req.params.surveyId;
 
     const survey = await getSurvey(surveyId);
-    const responses = await getSurveyResponses(surveyId);
+    const rows = await getSurveyResponses(surveyId);
 
-    const total = responses.length;
+    const total = rows.length;
 
-    const completed = responses.filter(
+    const completed = rows.filter(
       r => r.status === 'completed'
     ).length;
 
-    const failed = responses.filter(r =>
+    const failed = rows.filter(r =>
       ['failed', 'busy', 'no-answer', 'canceled'].includes(r.status)
     ).length;
 
@@ -139,7 +166,10 @@ app.get('/api/surveys/:surveyId/progress', async (req, res) => {
 
     if (pending === 0 && total > 0) {
       status = 'completed';
-      await updateSurveyStatus(surveyId, { status: 'completed' });
+
+      await updateSurveyStatus(surveyId, {
+        status: 'completed'
+      });
     }
 
     res.json({
@@ -151,19 +181,30 @@ app.get('/api/surveys/:surveyId/progress', async (req, res) => {
       failed,
       pending,
       progress: {
-        percentage: total === 0 ? 0 : Math.round(((completed + failed) / total) * 100),
+        percentage:
+          total === 0
+            ? 0
+            : Math.round(((completed + failed) / total) * 100),
         completed: completed + failed,
         total
       }
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 
+// ===============================
+// TWILIO CALLBACK
+// ===============================
 app.post('/api/ivr/status', async (req, res) => {
   try {
     const { CallSid, CallStatus } = req.body;
+
+    console.log('TWILIO CALLBACK:', CallSid, CallStatus);
 
     const state = getCallState(CallSid);
 
@@ -191,20 +232,29 @@ app.post('/api/ivr/status', async (req, res) => {
     }
 
     res.sendStatus(200);
-  } catch {
+  } catch (error) {
+    console.log(error);
     res.sendStatus(200);
   }
 });
 
+// ===============================
+// IVR ROUTES
+// ===============================
 app.post('/api/ivr/greeting', (req, res) => {
   res.type('text/xml');
-  res.send(generateGreetingTwiml(req.query.name || 'Friend'));
+  res.send(
+    generateGreetingTwiml(
+      req.query.name || 'Friend'
+    )
+  );
 });
 
 app.post('/api/ivr/question1', (req, res) => {
   const { Digits, CallSid } = req.body;
 
   const state = getCallState(CallSid);
+
   if (state) {
     state.answers.math12thPassed = Digits === '1';
     updateCallState(CallSid, state);
@@ -218,6 +268,7 @@ app.post('/api/ivr/question2', (req, res) => {
   const { Digits, CallSid } = req.body;
 
   const state = getCallState(CallSid);
+
   if (state) {
     state.answers.engineeringInterested = Digits === '1';
     updateCallState(CallSid, state);
@@ -228,30 +279,39 @@ app.post('/api/ivr/question2', (req, res) => {
 });
 
 app.post('/api/ivr/question3', (req, res) => {
-  const { Digits, CallSid } = req.body;
+  const { CallSid } = req.body;
 
   cleanupCallState(CallSid);
 
   res.type('text/xml');
-  res.send(generateQuestion3ResponseTwiml(Digits));
+  res.send(generateQuestion3ResponseTwiml());
 });
 
+// ===============================
+// DOWNLOAD EXCEL
+// ===============================
 app.get('/api/surveys/:surveyId/download', async (req, res) => {
   try {
     const survey = await getSurvey(req.params.surveyId);
-    const responses = await getSurveyResponses(req.params.surveyId);
+    const rows = await getSurveyResponses(req.params.surveyId);
 
-    const output = path.join(resultsDir, `results-${Date.now()}.xlsx`);
+    const output = path.join(
+      resultsDir,
+      `results-${Date.now()}.xlsx`
+    );
 
     generateUpdatedExcel(
       survey.excel_data.originalData || [],
-      responses,
+      rows,
       output
     );
 
     res.download(output);
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
 });
 

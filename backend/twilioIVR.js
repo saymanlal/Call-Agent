@@ -1,18 +1,12 @@
 import twilio from 'twilio';
-import {
-  updateResponse,
-  getSurveyResponses,
-  updateSurveyStatus
-} from './supabaseClient.js';
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 
-// FINAL FIXED BACKEND URL
 const BACKEND_URL =
- process.env.NEXT_PUBLIC_BACKEND_URL ||
-'https://call-agent-envo.onrender.com';
+  process.env.BACKEND_URL ||
+  'https://call-agent-envo.onrender.com';
 
 if (!accountSid || !authToken || !fromNumber) {
   throw new Error('Missing Twilio environment variables');
@@ -20,7 +14,7 @@ if (!accountSid || !authToken || !fromNumber) {
 
 const client = twilio(accountSid, authToken);
 
-// Memory state
+// In-memory call state
 const callState = new Map();
 
 // ===============================
@@ -39,15 +33,13 @@ export async function initiateCall(
       `&responseId=${responseId}` +
       `&name=${encodeURIComponent(contactName)}`;
 
-    const statusUrl =
-      `${BACKEND_URL}/api/ivr/status`;
-
     const call = await client.calls.create({
       to: phoneNumber,
       from: fromNumber,
       url: twimlUrl,
       method: 'POST',
-      statusCallback: statusUrl,
+
+      statusCallback: `${BACKEND_URL}/api/ivr/status`,
       statusCallbackMethod: 'POST',
       statusCallbackEvent: [
         'initiated',
@@ -69,7 +61,7 @@ export async function initiateCall(
 
     return call;
   } catch (error) {
-    console.error('Error initiating call:', error);
+    console.error('Call create failed:', error);
     throw error;
   }
 }
@@ -82,9 +74,7 @@ export function generateGreetingTwiml(contactName) {
   const twiml = new VoiceResponse();
 
   twiml.say(
-    {
-      voice: 'alice'
-    },
+    { voice: 'alice' },
     `Hello ${contactName}. Welcome to our survey.`
   );
 
@@ -97,13 +87,11 @@ export function generateGreetingTwiml(contactName) {
 
   gather.say(
     { voice: 'alice' },
-    'Press 1 if you passed 12th with Mathematics. Press 2 if No.'
+    'Press 1 if you passed twelfth with mathematics. Press 2 if no.'
   );
 
   twiml.redirect(
-    {
-      method: 'POST'
-    },
+    { method: 'POST' },
     `${BACKEND_URL}/api/ivr/greeting`
   );
 
@@ -127,14 +115,13 @@ export function generateQuestion1ResponseTwiml(answer) {
 
     gather.say(
       { voice: 'alice' },
-      'Are you interested in Engineering? Press 1 for Yes. Press 2 for No.'
+      'Are you interested in engineering? Press 1 for yes. Press 2 for no.'
     );
   } else {
     twiml.say(
       { voice: 'alice' },
       'Thank you for your response.'
     );
-
     twiml.hangup();
   }
 
@@ -153,7 +140,6 @@ export function generateQuestion2ResponseTwiml(answer) {
       { voice: 'alice' },
       'Excellent. Thank you.'
     );
-
     twiml.hangup();
   } else {
     const gather = twiml.gather({
@@ -165,7 +151,7 @@ export function generateQuestion2ResponseTwiml(answer) {
 
     gather.say(
       { voice: 'alice' },
-      'Which course? Press 1 Science, 2 Commerce, 3 Arts, 4 Other.'
+      'Which course? Press 1 science, 2 commerce, 3 arts, 4 other.'
     );
   }
 
@@ -175,13 +161,13 @@ export function generateQuestion2ResponseTwiml(answer) {
 // ===============================
 // QUESTION 3
 // ===============================
-export function generateQuestion3ResponseTwiml(answer) {
+export function generateQuestion3ResponseTwiml() {
   const VoiceResponse = twilio.twiml.VoiceResponse;
   const twiml = new VoiceResponse();
 
   twiml.say(
     { voice: 'alice' },
-    'Thank you for completing survey.'
+    'Thank you for completing the survey.'
   );
 
   twiml.hangup();
@@ -206,8 +192,4 @@ export function updateCallState(callSid, data) {
 
 export function cleanupCallState(callSid) {
   callState.delete(callSid);
-}
-
-export function getTwilioClient() {
-  return client;
 }
